@@ -6,6 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
+# Pictures
+*.png
+*.jpg
+*.jpeg
+*.gif
+
 # Executable files
 *.exe
 
