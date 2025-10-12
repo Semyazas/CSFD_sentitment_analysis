@@ -8,6 +8,7 @@ import re
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webelement import WebElement
+import tqdm
 
 class Scrapper:
     def __init__(self):
@@ -86,95 +87,79 @@ class Scrapper:
 
         service = Service('chromedriver.exe')  # Update with your chromedriver path
         driver = webdriver.Chrome(service=service, options=self.chrome_options)
-        wait = WebDriverWait(driver, 3000)
+        wait = WebDriverWait(driver, 30)
         try:
             driver.get(movie_url)
             time.sleep(0.5)  # Wait for the page to load
             driver.find_element(By.ID, "didomi-notice-agree-button").click()
-            next_page = True
             current_page = 1
 
-            while next_page:
+            for _ in tqdm.tqdm(range(20)): # Limit to 20 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
                 for review in reviews: 
                     result = self.extract_info_from_review(review, current_page, driver, wait)
-                   
+                    if result:
+                        pass
+
                 self.move_to_next_page(driver, wait, current_page )
-                print(f"--- End of page {current_page} ---")
+              #  print(f"--- End of page {current_page} ---")
                 current_page += 1
             return reviews
 
         finally:
             driver.quit()
 
-    def extract_info_from_review(self, 
-            review : WebElement, 
-            current_page : int,
-            driver : webdriver.Chrome, 
-            wait : WebDriverWait) \
-        -> tuple[str, str, str, str] | None: 
-
-        username = review.find_element(By.CLASS_NAME, "user-title").text
-        print("Username:", username)  
-        # I want to find rating of the user, it is in format "stars stars-X" where X is number of stars
+    def extract_info_from_review(self, review : WebElement, current_page : int, driver : webdriver.Chrome, wait : WebDriverWait) -> tuple[str, str, str, str] | None: # I want to find rating of the user, it is in format "stars stars-X" where X is number of stars
         pattern = re.compile(r"^stars stars-(\d)$")
         try:
+            username = review.find_element(By.CLASS_NAME, "user-title").text
+         #   print("Username:", username)
             rating_element = WebDriverWait(review, 3).until(
                 lambda r: r.find_element(By.CLASS_NAME, "star-rating")
             )
-            subclasses = rating_element.find_elements(By.XPATH, ".//span[contains(@class, 'stars')]") 
+            subclasses = rating_element.find_elements(By.XPATH, ".//span[contains(@class, 'stars')]")
             for subclass in subclasses:
                 match = pattern.match(subclass.get_attribute("class"))
                 if match:
-                    print(f"Rating: {match.group(1)}")
+          #          print(f"Rating: {match.group(1)}")
                     break
             review_text = review.find_element(By.CLASS_NAME, "comment").text
-            print("Text:", review_text)
-
+         #   print("Text:", review_text)
             movie_name = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-header-name"))).find_element(By.TAG_NAME, "h1").text
-            print("Movie name:", movie_name)
-            return username, match.group(1), review_text, movie_name
-        
+         #   print("Movie name:", movie_name)
+            rating = match.group(1) if match else None
+            print(f"✅ {username=} {rating=} {len(review_text or '')} chars {movie_name=}")
+            return username, rating, review_text, movie_name
         except Exception as e:
             print(f"[WARN] Rating not found for one review: {e}")
-            rating_element = None                    
-            driver.save_screenshot(f"debug_page_{current_page}.png")
+            rating_element = None
+            # driver.save_screenshot(f"debug_page_{current_page}.png")
             return None
-        
-    def move_to_next_page(self, driver : webdriver.Chrome, wait : WebDriverWait , current_page : int) -> bool:
-        """Move to the next page of reviews if available."""
-        time.sleep(2)  # Wait before clicking the next button
-                
-        try:
-            next_page_button = wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, f"//div[contains(@class, 'pagination')]//a[contains(text(), '{current_page}')]")
-                )
-            )
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_page_button)
-            time.sleep(0.3)
-            driver.execute_script("arguments[0].click();", next_page_button)
-            print(f"[INFO] Clicked page {current_page}")
-            return True
-        
-        except Exception as e:
-            print(f"[ERROR] Could not click page {current_page}: {e}")
-            driver.save_screenshot(f"debug_page_{current_page}.png")
-            time.sleep(2)  # Wait for the page to load
-            return False
 
+    def move_to_next_page(self, driver, wait, current_page):
+        for attempt in range(3):
+            try:
+                next_button = wait.until(
+                    EC.element_to_be_clickable((By.XPATH, f"//div[contains(@class, 'pagination')]//a[text()='{current_page+1}']"))
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
+                driver.execute_script("arguments[0].click();", next_button)
+                time.sleep(1.5)
+                return True
+            except Exception as e:
+                print(f"[WARN] Attempt {attempt+1}/3 to click page {current_page+1} failed: {e}")
+                time.sleep(2)
+        driver.save_screenshot(f"failed_page_{current_page}.png")
+        return False
 def main():
     scrapper = Scrapper()
     genres = [("Sci-Fi",False), ("Horor",True)]
-    movies = scrapper.scrap_url_from_genres(genres)
+    movies = scrapper.scrap_url_from_genres(genres)  
 
-    """
-    queries = ["Batman", "Superman"]
-    movies = scrapper.scrap_url_from_searches(queries)
     print(movies)
     for movie_url in movies:
         print(f"Scraping reviews for movie: {movie_url}")
         data = scrapper.scrap_CSFD_reviews_from_movie(movie_url + "recenze/")
-    """
+    
 if __name__ == "__main__":
     main()
