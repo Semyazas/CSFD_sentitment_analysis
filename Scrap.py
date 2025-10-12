@@ -18,6 +18,44 @@ class Scrapper:
         self.chrome_options.add_argument("--load-extension=c:\\Users\\marti\\Documents\\practice_data\\adblocker\\chrome")  # Load your extension here
 
 
+    def scrap_url_from_genres(self, genres: list[tuple[str,bool]]) -> list[str]:
+        """Scrape URLs from CSFD genre pages."""
+        # Set up the Chrome driver
+        service = Service('chromedriver.exe')  # Update with your chromedriver path
+        driver = webdriver.Chrome(service=service, options=self.chrome_options)
+
+        try:
+            all_urls = []
+            for genre, only_genre in genres:
+                genre_url = f'https://www.csfd.cz/podrobne-vyhledavani/?sort=rating_average/'
+                driver.get(genre_url)
+                time.sleep(0.5)  # Wait for the page to load
+                if "didomi-notice-agree-button" in driver.page_source:
+                    driver.find_element(By.ID, "didomi-notice-agree-button").click()
+                genres_button = driver.find_element(By.ID, "complex-selects-genre-include")
+                genre = genres_button.find_element(By.XPATH, f".//option[text()='{genre}']")
+                genre.click()
+
+                if only_genre:
+                    filter = driver.find_element(By.ID, "frm-filmsForm-genre")
+                    filter.find_element(By.XPATH, ".//option[@value='1']").click()
+                print("genre clicked: ",genre.get_attribute('text'))
+                time.sleep(0.5)  # Wait for the elements to be found
+            #    sort_button = driver.find_element(By.ID, "frm-filmsSortForm-filmsSortForm-sort")
+            #    sort_button.find_element(By.XPATH, ".//option[@value='rating_average']").click()
+                driver.find_element(By.XPATH, "//button[@class='icon-in-left']").click()
+                time.sleep(0.5)  # Wait for the elements to be found
+                results = driver.find_elements(By.XPATH, "//a[@class='film-title-name']")
+                urls = [results[i].get_attribute('href') for i in range(min(10,len(results)))]
+                all_urls.extend(urls)
+            
+                print(urls)
+            return all_urls
+
+        finally:
+            # Close the driver
+            driver.quit()
+
     def scrap_url_from_searches(self, queries: list[str]) -> list[str]:
         """Scrape URLs from CSFD search results."""
 
@@ -127,12 +165,16 @@ class Scrapper:
 
 def main():
     scrapper = Scrapper()
+    genres = [("Sci-Fi",False), ("Horor",True)]
+    movies = scrapper.scrap_url_from_genres(genres)
+
+    """
     queries = ["Batman", "Superman"]
     movies = scrapper.scrap_url_from_searches(queries)
     print(movies)
     for movie_url in movies:
         print(f"Scraping reviews for movie: {movie_url}")
         data = scrapper.scrap_CSFD_reviews_from_movie(movie_url + "recenze/")
-
+    """
 if __name__ == "__main__":
     main()
