@@ -93,18 +93,18 @@ class Scrapper:
             time.sleep(0.5)  # Wait for the page to load
             driver.find_element(By.ID, "didomi-notice-agree-button").click()
             current_page = 1
+            review_info = []
 
-            for _ in tqdm.tqdm(range(20)): # Limit to 20 pages
+            for _ in tqdm.tqdm(range(10)): # Limit to 10 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
                 for review in reviews: 
                     result = self.extract_info_from_review(review, current_page, driver, wait)
                     if result:
-                        pass
-
+                        review_info.append(result)
                 self.move_to_next_page(driver, wait, current_page )
               #  print(f"--- End of page {current_page} ---")
                 current_page += 1
-            return reviews
+            return review_info
 
         finally:
             driver.quit()
