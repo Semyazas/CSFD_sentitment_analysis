@@ -17,7 +17,7 @@ def main():
     c.execute('''CREATE TABLE IF NOT EXISTS movies(
         movie_name TEXT,
         genre TEXT,
-        url TEXT
+        average_rating TEXT
     );''')
     conn.commit()
 
