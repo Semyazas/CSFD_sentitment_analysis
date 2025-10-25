@@ -19,7 +19,10 @@ class Scrapper:
         self.chrome_options.add_argument("--load-extension=c:\\Users\\marti\\Documents\\practice_data\\adblocker\\chrome")  # Load your extension here
 
 
-    def scrap_url_from_genres(self, genres: list[tuple[str,bool]]) -> list[str]:
+    def scrap_url_from_genres(self, 
+            genres: list[tuple[str,bool]],
+            number_of_movies_from_genre : int  = 5,
+        ) -> list[str]:
         """Scrape URLs from CSFD genre pages."""
         # Set up the Chrome driver
         service = Service('chromedriver.exe')  # Update with your chromedriver path
@@ -42,15 +45,13 @@ class Scrapper:
                     filter.find_element(By.XPATH, ".//option[@value='1']").click()
                 print("genre clicked: ",genre.get_attribute('text'))
                 time.sleep(0.5)  # Wait for the elements to be found
-            #    sort_button = driver.find_element(By.ID, "frm-filmsSortForm-filmsSortForm-sort")
-            #    sort_button.find_element(By.XPATH, ".//option[@value='rating_average']").click()
+
                 driver.find_element(By.XPATH, "//button[@class='icon-in-left']").click()
                 time.sleep(0.5)  # Wait for the elements to be found
                 results = driver.find_elements(By.XPATH, "//a[@class='film-title-name']")
-                urls = [results[i].get_attribute('href') for i in range(min(10,len(results)))]
+                urls = [results[i].get_attribute('href') for i in range(min(number_of_movies_from_genre,len(results)))]
                 all_urls.extend(urls)
-            
-                print(urls)
+        
             return all_urls
 
         finally:
@@ -82,7 +83,9 @@ class Scrapper:
             # Close the driver
             driver.quit()
 
-    def scrap_CSFD_reviews_from_movie(self, movie_url: str) -> list[str]:
+    def scrap_CSFD_reviews_from_movie(self,
+            movie_url: str,
+            number_of_pages : int  = 5 ) -> list[str]:
         """Scrape reviews from a CSFD movie page."""
 
         service = Service('chromedriver.exe')  # Update with your chromedriver path
@@ -94,8 +97,13 @@ class Scrapper:
             driver.find_element(By.ID, "didomi-notice-agree-button").click()
             current_page = 1
             review_info = []
-
-            for _ in tqdm.tqdm(range(10)): # Limit to 10 pages
+            time.sleep(1)  # Wait for the page to load
+            elem = driver.find_element(By.CLASS_NAME, "film-rating-average")
+            raw = (elem.get_attribute("textContent") or "").strip()
+            m = re.search(r"([0-9]+(?:[.,][0-9]+)?)", raw)
+            average_rating = float(m.group(1).replace(",", ".")) if m else None
+            print(f"Average rating extracted: {average_rating}")
+            for _ in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
                 for review in reviews: 
                     result = self.extract_info_from_review(review, current_page, driver, wait)
@@ -104,7 +112,9 @@ class Scrapper:
                 self.move_to_next_page(driver, wait, current_page )
               #  print(f"--- End of page {current_page} ---")
                 current_page += 1
-            return review_info
+            return {"reviews": review_info, 
+                    "average_rating": average_rating,
+            }
 
         finally:
             driver.quit()
@@ -113,7 +123,6 @@ class Scrapper:
         pattern = re.compile(r"^stars stars-(\d)$")
         try:
             username = review.find_element(By.CLASS_NAME, "user-title").text
-         #   print("Username:", username)
             rating_element = WebDriverWait(review, 3).until(
                 lambda r: r.find_element(By.CLASS_NAME, "star-rating")
             )
@@ -121,12 +130,9 @@ class Scrapper:
             for subclass in subclasses:
                 match = pattern.match(subclass.get_attribute("class"))
                 if match:
-          #          print(f"Rating: {match.group(1)}")
                     break
             review_text = review.find_element(By.CLASS_NAME, "comment").text
-         #   print("Text:", review_text)
             movie_name = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-header-name"))).find_element(By.TAG_NAME, "h1").text
-         #   print("Movie name:", movie_name)
             rating = match.group(1) if match else None
             print(f"✅ {username=} {rating=} {len(review_text or '')} chars {movie_name=}")
             return username, rating, review_text, movie_name
