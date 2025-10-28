@@ -1,4 +1,3 @@
-from ast import pattern
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -9,17 +8,18 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webelement import WebElement
 import tqdm
-
+import sqlite3
 class Scrapper:
     def __init__(self):
         self.chrome_options = Options()
-    # chrome_options.add_argument("--headless")  # Run in headless mode
+       # self.chrome_options.add_argument("--headless")  # Run in headless mode
         self.chrome_options.add_argument("--no-sandbox")
         self.chrome_options.add_argument("--disable-dev-shm-usage")
         self.chrome_options.add_argument("--load-extension=c:\\Users\\marti\\Documents\\practice_data\\adblocker\\chrome")  # Load your extension here
 
 
-    def scrap_url_from_genres(self, 
+    def scrap_url_from_genres(
+            self, 
             genres: list[tuple[str,bool]],
             number_of_movies_from_genre : int  = 5,
         ) -> list[str]:
@@ -58,7 +58,12 @@ class Scrapper:
             # Close the driver
             driver.quit()
 
-    def scrap_url_from_searches(self, queries: list[str]) -> list[str]:
+    def scrap_url_from_searches(
+            self, 
+            queries: list[str],
+            path :str,
+            how_many : int = 5
+        ) -> list[str]:
         """Scrape URLs from CSFD search results."""
 
         # Set up the Chrome driver
@@ -73,9 +78,10 @@ class Scrapper:
                 time.sleep(0.5)  # Wait for the page to load
                 if "didomi-notice-agree-button" in driver.page_source:
                     driver.find_element(By.ID, "didomi-notice-agree-button").click()
-                results = driver.find_elements(By.XPATH, "//a[@class='film-title-name']")
+                results = driver.find_elements(By.XPATH, path)
                 time.sleep(0.5)  # Wait for the elements to be found
                 urls = [result.get_attribute('href') for result in results]
+                urls = urls[:how_many]
                 all_urls.extend(urls)
             return all_urls
 
@@ -83,9 +89,11 @@ class Scrapper:
             # Close the driver
             driver.quit()
 
-    def scrap_CSFD_reviews_from_movie(self,
+    def scrap_CSFD_reviews_from_movie(
+            self,
             movie_url: str,
-            number_of_pages : int  = 5 ) -> list[str]:
+            number_of_pages : int  = 5 
+        ) -> list[str]:
         """Scrape reviews from a CSFD movie page."""
 
         service = Service('chromedriver.exe')  # Update with your chromedriver path
@@ -106,10 +114,10 @@ class Scrapper:
             for _ in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
                 for review in reviews: 
-                    result = self.extract_info_from_review(review, current_page, driver, wait)
+                    result = self.__extract_info_from_review(review, current_page, driver, wait)
                     if result:
                         review_info.append(result)
-                self.move_to_next_page(driver, wait, current_page )
+                self.__move_to_next_page(driver, wait, current_page )
               #  print(f"--- End of page {current_page} ---")
                 current_page += 1
             return {"reviews": review_info, 
@@ -119,7 +127,10 @@ class Scrapper:
         finally:
             driver.quit()
 
-    def extract_info_from_review(self, review : WebElement, current_page : int, driver : webdriver.Chrome, wait : WebDriverWait) -> tuple[str, str, str, str] | None: # I want to find rating of the user, it is in format "stars stars-X" where X is number of stars
+    def __extract_info_from_review(
+            self,
+            review : WebElement,
+            wait : WebDriverWait) -> tuple[str, str, str, str] | None: # I want to find rating of the user, it is in format "stars stars-X" where X is number of stars
         pattern = re.compile(r"^stars stars-(\d)$")
         try:
             username = review.find_element(By.CLASS_NAME, "user-title").text
@@ -142,7 +153,7 @@ class Scrapper:
             # driver.save_screenshot(f"debug_page_{current_page}.png")
             return None
 
-    def move_to_next_page(self, driver, wait, current_page):
+    def __move_to_next_page(self, driver, wait, current_page):
         for attempt in range(3):
             try:
                 next_button = wait.until(
@@ -155,17 +166,109 @@ class Scrapper:
             except Exception as e:
                 print(f"[WARN] Attempt {attempt+1}/3 to click page {current_page+1} failed: {e}")
                 time.sleep(2)
-        driver.save_screenshot(f"failed_page_{current_page}.png")
         return False
-def main():
-    scrapper = Scrapper()
-    genres = [("Sci-Fi",False), ("Horor",True)]
-    movies = scrapper.scrap_url_from_genres(genres)  
-
-    print(movies)
-    for movie_url in movies:
-        print(f"Scraping reviews for movie: {movie_url}")
-        data = scrapper.scrap_CSFD_reviews_from_movie(movie_url + "recenze/")
     
-if __name__ == "__main__":
-    main()
+    def get_user_data(
+        self,user_list : list[str],
+        cursor : sqlite3.Cursor
+        ) -> None:
+        """ Get user data from CSFD user pages.
+            We will scrape data about:
+            - username
+            - total reviews
+            - age of account
+            - where is user from
+        """
+        for username in user_list:
+            try:
+                actual_username = self.scrap_url_from_searches(
+                    [username], 
+                    path = "//a[@class='user-title-name']",
+                    how_many = 1
+                )
+                data_point = self.__scrap_user_data_from_page(actual_username[0])
+                if data_point:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO users (username, total_reviews, since_when, place)
+                        VALUES (?, ?, ?, ?)
+                    """, (
+                        data_point["username"],
+                        data_point["total_reviews"],
+                        data_point["since_when"],
+                        data_point["place"]
+                    ))
+                    print(f"Inserted data for user {username}")
+                    cursor.connection.commit()
+            except Exception as e:
+                print(f"[WARN] Could not find user {username}: {e}")
+
+    def __scrap_user_data_from_page(self, url: str) -> list[dict]:
+        """ Scrape user data from CSFD user pages.
+            We will scrape data about:
+            - username
+            - total reviews
+            - age of account
+            - where is user from
+        """
+        service = Service('chromedriver.exe')  # Update with your chromedriver path
+        driver = webdriver.Chrome(service=service, options=self.chrome_options)
+        try:
+            driver.get(url)
+            time.sleep(0.5)  # Wait for the page to load
+            if "didomi-notice-agree-button" in driver.page_source:
+                driver.find_element(By.ID, "didomi-notice-agree-button").click()
+                # Implementation would go her
+            content = driver.find_element(By.CLASS_NAME, "user-profile-content")
+
+            username = content.find_element(By.XPATH, "//h1").text
+            since_when_present = int(
+                content.find_elements(By.XPATH, "//div[@class='user-profile-footer-left']")\
+                [0].text.split()[3].split(".")[2]
+            )
+            place = self.extract_place_from_profile(driver)          
+            sec = driver.find_element(By.XPATH, "//section[@class='box box-user-rating striped-articles']")
+            elem = sec.find_element(By.CSS_SELECTOR, ".count")
+            raw = (elem.get_attribute("textContent") or elem.text or "").strip()
+            # raw will be like "(6\u00A0106)" or "(6 106)" or "6,106"
+
+            # Remove parentheses and surrounding whitespace
+            raw = raw.strip().lstrip("(").rstrip(")")
+
+            # Remove non-digit characters (spaces, NBSP, commas, etc.) and keep digits only
+            digits = re.sub(r"[^\d]", "", raw)
+
+            count = int(digits) if digits else 0
+            return {
+                "username": username,
+                "total_reviews": count,
+                "since_when": since_when_present,
+                "place": place
+            }
+
+    
+        except Exception as e:
+            print(f"[WARN] Could not scrape user data from {url}: {e}")
+        # Implementation would go here
+        return None
+    def extract_place_from_profile(self,driver,timeout= 8):
+        wait = WebDriverWait(driver, timeout)
+        # wait for the block to exist
+        p = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".user-profile-content p")))
+
+        # get username (strong) and full p textContent (keeps whitespace)
+        try:
+            name = p.find_element(By.TAG_NAME, "strong").get_attribute("textContent").strip()
+        except Exception:
+            name = ""
+        full = (p.get_attribute("textContent") or "").strip()
+
+        # remove the username occurrence (if present) and normalize whitespace
+        if name:
+            full = full.replace(name, "")
+        full = " ".join(full.split())        # collapse whitespace
+        full = full.strip().strip('"')       # strip leading/trailing quotes
+
+        # split by newline or comma and take first meaningful token
+        parts = [part.strip().strip('"') for part in re.split(r'[\n,]+', full) if part.strip()]
+        place = parts[0] if parts else None
+        return place
