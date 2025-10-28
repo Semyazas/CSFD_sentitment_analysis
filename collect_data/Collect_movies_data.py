@@ -21,7 +21,7 @@ def collect_data_for_movies_from_genres(
             number_of_pages_to_scroll,
             genre[0]              
         )
-
+    
 def collect_data_for_movie(
         movie_url: str,
         conn : sqlite3.Connection,
@@ -40,8 +40,12 @@ def collect_data_for_movie(
     # username, rating, review_text, movie_name
     # Create a table
     c.executemany("""
-        INSERT OR IGNORE INTO reviews (username, rating, review_text, movie_name)
-        VALUES (?, ?, ?, ?)
+        INSERT OR IGNORE INTO reviews (
+            username,
+            rating, 
+            review_text, 
+            movie_name
+        ) VALUES (?, ?, ?, ?)
         """, 
         movies_data
     )
