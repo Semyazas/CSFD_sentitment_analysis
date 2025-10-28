@@ -21,10 +21,11 @@ def main():
     );''')
     conn.commit()
 
-    c.execute('''CREATE TABLE IF NOT EXISTS users(
+    c.execute('''CREATE TABLE users(
         username TEXT,
         total_reviews INT,
-        average_rating REAL
+        since_when TEXT,
+        place TEXT
     );''')
 
     conn.commit()
