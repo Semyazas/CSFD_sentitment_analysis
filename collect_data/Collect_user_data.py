@@ -1,5 +1,5 @@
 import sqlite3
-import Scrap
+from Scrappers.UserProfileScrapper import UserProfileScrapper 
 
 def main() -> None:    
     conn = sqlite3.connect('movie_reviews.db')
@@ -16,8 +16,7 @@ def main() -> None:
     data = list(map(lambda x : x[0],data))
     conn.commit()
 
-
-    Scrapper = Scrap.Scrapper()
+    Scrapper = UserProfileScrapper()
     Scrapper.get_user_data(data,c)
 
 if __name__ == "__main__":
