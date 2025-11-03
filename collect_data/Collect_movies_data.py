@@ -1,17 +1,19 @@
 import sqlite3
-from Scrap import Scrapper
+from Scrappers.MovieReviewScraper import MovieReviewScraper
+from Scrappers.UrlFinder import UrlFinder
 
 def collect_data_for_movies_from_genres(
         genres: list[str],
         conn : sqlite3.Connection,
         number_of_movies_from_genre : int  = 5,
         number_of_pages_to_scroll : int = 5) -> None:
-    scrapper = Scrapper()
-    movies = scrapper.scrap_url_from_genres(
+    url_scrapper = UrlFinder()
+    movies = url_scrapper.scrap_url_from_genres(
         genres,
         number_of_movies_from_genre
     )  
     conn = sqlite3.connect('movie_reviews.db')
+    movie_scrapper = MovieReviewScraper()
     for i,movie_url in enumerate(movies):
         genre = genres[i // number_of_movies_from_genre]
         print(f"Collecting data for movie: {movie_url} of genre {genre}")
@@ -19,15 +21,16 @@ def collect_data_for_movies_from_genres(
             movie_url,
             conn,
             number_of_pages_to_scroll,
-            genre[0]              
+            genre[0],
+            scrapper= movie_scrapper            
         )
     
 def collect_data_for_movie(
         movie_url: str,
         conn : sqlite3.Connection,
         number_of_pages : int,
-        genre : str) -> None:
-    scrapper = Scrapper()
+        genre : str,
+        scrapper: MovieReviewScraper) -> None:
     data = scrapper.\
         scrap_CSFD_reviews_from_movie(movie_url + "recenze/", number_of_pages)
 
