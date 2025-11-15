@@ -9,11 +9,13 @@ def main() -> None:
 
     # Create a table
     c.execute("""
-        SELECT DISTINCT(username)
+        SELECT DISTINCT(username), user_ref
         FROM reviews
     """)
     data = c.fetchall()
-    data = list(map(lambda x : x[0],data))
+    print("Number of users to scrape:", len(data))
+    print(data[0])
+
     conn.commit()
 
     Scrapper = UserProfileScrapper()

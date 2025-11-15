@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import re
 import tqdm
+import sqlite3
 
 class MovieReviewScraper(AbsScrapper):
     
@@ -16,18 +17,21 @@ class MovieReviewScraper(AbsScrapper):
     def scrap_CSFD_reviews_from_movie(
             self,
             movie_url: str,
-            number_of_pages : int  = 5 
-        ) -> list[str]:
+            genre : str,
+            number_of_pages : int  = 5,
+            page : int = 1
+        ) -> None:
         """Scrape reviews from a CSFD movie page."""
 
         service = Service('chromedriver.exe')  # Update with your chromedriver path
         driver = webdriver.Chrome(service=service, options=self.chrome_options)
         wait = WebDriverWait(driver, 30)
+        conn = sqlite3.connect('movie_reviews.db')
         try:
             driver.get(movie_url)
             wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
             wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()
-            current_page = 1
+            current_page = page
             review_info = []
             elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-rating-average")))
 
@@ -35,22 +39,39 @@ class MovieReviewScraper(AbsScrapper):
             m = re.search(r"([0-9]+(?:[.,][0-9]+)?)", raw)
             average_rating = float(m.group(1).replace(",", ".")) if m else None
             print(f"Average rating extracted: {average_rating}")
+            print("number_of_pages:", number_of_pages)
 
-            for _ in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
+
+            for page_num in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
-                for review in reviews: 
-                    result = self.__extract_info_from_review(review, wait)
-                    if result:
-                        review_info.append(result)
-                self.__move_to_next_page(driver, wait, current_page )
+                for review_index,review in enumerate(reviews): 
+                    try:
+                        result = self.__extract_info_from_review(review, wait)
+                        if result:
+                            review_info.append(result)
+                            self.__add_data_to_reviews_table(
+                                conn,
+                                result
+                            )
+                            if page_num == 0 and review_index == 0:
+                                print(f"Sample review data added to DB: {result}")
+                                self.__add_data_to_movies_table(
+                                    conn,
+                                    result["movie_name"],
+                                    genre,  # Genre is not known here
+                                    average_rating
+                                )
+                    except Exception as e:
+                        print(f"[ERROR] Failed to extract/add review index {review_index} on page {page_num+1}: {e}")
+                try:
+                    self.__move_to_next_page(driver, wait, current_page)
+                except Exception as e:
+                    print(f"[ERROR] Could not move to page {current_page + 1}: {e}")
+                    return True, current_page
                 current_page += 1
-
-            return {
-                "reviews": review_info, 
-                "average_rating": average_rating,
-            }
         finally:
             driver.quit()
+            return False, current_page  # Indicate no retry needed
 
     def __extract_info_from_review(
             self,
@@ -58,10 +79,10 @@ class MovieReviewScraper(AbsScrapper):
             wait : WebDriverWait) -> tuple[str, str, str, str] | None:
         # I want to find rating of the user,
         # it is in format "stars stars-X" where X is number of stars
-        
         pattern = re.compile(r"^stars stars-(\d)$")
         try:
             username = review.find_element(By.CLASS_NAME, "user-title").text
+            user_ref  = review.find_element(By.CLASS_NAME, "user-title-name").get_attribute("href")
             rating_element = WebDriverWait(review, 3).until(
                 lambda r: r.find_element(By.CLASS_NAME, "star-rating")
             )
@@ -71,10 +92,21 @@ class MovieReviewScraper(AbsScrapper):
                 if match:
                     break
             review_text = review.find_element(By.CLASS_NAME, "comment").text
-            movie_name = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-header-name"))).find_element(By.TAG_NAME, "h1").text
+            movie_name = wait.until(
+                EC.presence_of_element_located(
+                    (By.CLASS_NAME, "film-header-name"))
+            ).find_element(By.TAG_NAME, "h1").text
+
             rating = match.group(1) if match else None
             print(f"✅ {username=} {rating=} {len(review_text or '')} chars {movie_name=}")
-            return username, rating, review_text, movie_name
+    
+            return {
+                "username" : username,
+                "rating" : rating, 
+                "review_text" : review_text, 
+                "movie_name" : movie_name, 
+                "user_ref" : user_ref
+            }
         
         except Exception as e:
             print(f"[WARN] Rating not found for one review: {e}")
@@ -96,3 +128,44 @@ class MovieReviewScraper(AbsScrapper):
             except Exception as e:
                 print(f"[WARN] Attempt {attempt+1}/3 to click page {current_page+1} failed: {e}")
         return False
+        
+    def __add_data_to_reviews_table(
+            self,
+            conn : sqlite3.Connection,
+            review_data : list[tuple[str, str, str, str, str]]) -> None:
+        c = conn.cursor()
+        # username, rating, review_text, movie_name
+        # Create a table
+        c.execute("""
+            INSERT OR IGNORE INTO reviews (
+                username,
+                rating, 
+                review_text, 
+                movie_name,
+                user_ref
+            ) VALUES (?, ?, ?, ?, ?)
+            """, 
+            (review_data["username"],
+            review_data["rating"],
+            review_data["review_text"],
+            review_data["movie_name"],
+            review_data["user_ref"]
+            )
+        )
+        conn.commit()
+
+    def __add_data_to_movies_table(
+            self,
+            conn : sqlite3.Connection,
+            movie_name : str,
+            genre : str,
+            average_rating : float) -> None:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO movies (
+                movie_name,
+                genre,
+                average_rating
+            ) VALUES (?, ?, ?)""",
+            (movie_name, genre, average_rating))
+        conn.commit()

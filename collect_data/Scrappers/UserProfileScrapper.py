@@ -6,14 +6,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import re
-import time
+import tqdm
 
 class UserProfileScrapper(UrlFinder):
     def __init__(self):
         super().__init__()
 
     def get_user_data(
-        self,user_list : list[str],
+        self,
+        user_list : list[str],
         cursor : sqlite3.Cursor
         ) -> None:
         """ Get user data from CSFD user pages.
@@ -23,30 +24,29 @@ class UserProfileScrapper(UrlFinder):
             - age of account
             - where is user from
         """
-        for username in user_list:
+        for username, user_url in tqdm.tqdm(user_list):
             try:
-                actual_username = self.scrap_url_from_searches(
-                    [username], 
-                    path = "//a[@class='user-title-name']",
-                    how_many = 1
-                )
-                data_point = self.__scrap_user_data_from_page(actual_username[0])
+                data_point = self.__scrap_user_data_from_page(user_url)
                 if data_point:
                     cursor.execute("""
-                        INSERT OR IGNORE INTO users (username, total_reviews, since_when, place)
-                        VALUES (?, ?, ?, ?)
+                        INSERT OR IGNORE INTO users (username, total_reviews, since_when, place, user_ref)
+                        VALUES (?, ?, ?, ?, ?)
                     """, (
-                        data_point["username"],
+                        username, 
                         data_point["total_reviews"],
                         data_point["since_when"],
-                        data_point["place"]
+                        data_point["place"],
+                        user_url
                     ))
-                    print(f"Inserted data for user {username}")
                     cursor.connection.commit()
+                    
             except Exception as e:
                 print(f"[WARN] Could not find user {username}: {e}")
 
-    def __scrap_user_data_from_page(self, url: str) -> list[dict]:
+    def __scrap_user_data_from_page(
+        self, 
+        url: str
+        ) -> list[dict]:
         """ Scrape user data from CSFD user pages.
             We will scrape data about:
             - username
@@ -56,12 +56,12 @@ class UserProfileScrapper(UrlFinder):
         """
         service = Service('chromedriver.exe')  # Update with your chromedriver path
         driver = webdriver.Chrome(service=service, options=self.chrome_options)
+        wait = WebDriverWait(driver, 30)
         try:
             driver.get(url)
-            time.sleep(0.5)  # Wait for the page to load
             if "didomi-notice-agree-button" in driver.page_source:
-                driver.find_element(By.ID, "didomi-notice-agree-button").click()
-                # Implementation would go her
+                wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
+                wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()
             content = driver.find_element(By.CLASS_NAME, "user-profile-content")
 
             username = content.find_element(By.XPATH, "//h1").text
@@ -69,32 +69,34 @@ class UserProfileScrapper(UrlFinder):
                 content.find_elements(By.XPATH, "//div[@class='user-profile-footer-left']")\
                 [0].text.split()[3].split(".")[2]
             )
-            place = self.extract_place_from_profile(driver)          
+            place = self.__extract_place_from_profile(driver)          
             sec = driver.find_element(By.XPATH, "//section[@class='box box-user-rating striped-articles']")
             elem = sec.find_element(By.CSS_SELECTOR, ".count")
             raw = (elem.get_attribute("textContent") or elem.text or "").strip()
-            # raw will be like "(6\u00A0106)" or "(6 106)" or "6,106"
-
-            # Remove parentheses and surrounding whitespace
             raw = raw.strip().lstrip("(").rstrip(")")
 
             # Remove non-digit characters (spaces, NBSP, commas, etc.) and keep digits only
             digits = re.sub(r"[^\d]", "", raw)
 
             count = int(digits) if digits else 0
+            driver.close()
             return {
                 "username": username,
                 "total_reviews": count,
                 "since_when": since_when_present,
                 "place": place
             }
-
     
         except Exception as e:
             print(f"[WARN] Could not scrape user data from {url}: {e}")
         # Implementation would go here
         return None
-    def extract_place_from_profile(self,driver,timeout= 8):
+    
+    def __extract_place_from_profile(
+        self,
+        driver,
+        timeout= 8
+        ) -> str | None:
         wait = WebDriverWait(driver, timeout)
         # wait for the block to exist
         p = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".user-profile-content p")))

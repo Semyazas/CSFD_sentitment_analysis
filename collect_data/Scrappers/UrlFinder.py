@@ -67,8 +67,8 @@ class UrlFinder(AbsScrapper):
                 search_url = f'https://www.csfd.cz/hledat/?q={query.replace(" ", "+")}'
                 driver.get(search_url)
                 if "didomi-notice-agree-button" in driver.page_source:
-                    wait.until(EC.presence_of_element_located(By.ID, "didomi-notice-agree-button"))
-                    wait.until(EC.element_to_be_clickable(By.ID, "didomi-notice-agree-button")).click()                
+                    wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
+                    wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()                
                 results = driver.find_elements(By.XPATH, path)
                 urls = [result.get_attribute('href') for result in results]
                 urls = urls[:how_many]
