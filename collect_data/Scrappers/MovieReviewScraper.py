@@ -32,37 +32,18 @@ class MovieReviewScraper(AbsScrapper):
             wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
             wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()
             current_page = page
-            review_info = []
-            elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-rating-average")))
-
-            raw = (elem.get_attribute("textContent") or "").strip()
-            m = re.search(r"([0-9]+(?:[.,][0-9]+)?)", raw)
-            average_rating = float(m.group(1).replace(",", ".")) if m else None
-            print(f"Average rating extracted: {average_rating}")
-            print("number_of_pages:", number_of_pages)
-
+            average_rating = self.__get_average_rating(wait)
 
             for page_num in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
                 reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
-                for review_index,review in enumerate(reviews): 
-                    try:
-                        result = self.__extract_info_from_review(review, wait)
-                        if result:
-                            review_info.append(result)
-                            self.__add_data_to_reviews_table(
-                                conn,
-                                result
-                            )
-                            if page_num == 0 and review_index == 0:
-                                print(f"Sample review data added to DB: {result}")
-                                self.__add_data_to_movies_table(
-                                    conn,
-                                    result["movie_name"],
-                                    genre,  # Genre is not known here
-                                    average_rating
-                                )
-                    except Exception as e:
-                        print(f"[ERROR] Failed to extract/add review index {review_index} on page {page_num+1}: {e}")
+                self.__handle_data_collection_from_page(
+                    conn,
+                    reviews,
+                    wait,
+                    page_num,
+                    genre,
+                    average_rating
+                )
                 try:
                     self.__move_to_next_page(driver, wait, current_page)
                 except Exception as e:
@@ -72,32 +53,55 @@ class MovieReviewScraper(AbsScrapper):
         finally:
             driver.quit()
             return False, current_page  # Indicate no retry needed
+        
+    def __get_average_rating(
+                self,
+                wait : WebDriverWait
+                ) -> float | None:
+            elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-rating-average")))
+            raw = (elem.get_attribute("textContent") or "").strip()
+            m = re.search(r"([0-9]+(?:[.,][0-9]+)?)", raw)
+            average_rating = float(m.group(1).replace(",", ".")) if m else None
+            return average_rating
+        
+    def __handle_data_collection_from_page(
+            self,
+            conn : sqlite3.Connection,
+            reviews : WebElement,
+            wait,
+            page_num : int,
+            genre : str,
+            average_rating : float
+            ) -> None:
+        for review_index,review in enumerate(reviews): 
+            try:
+                result = self.__extract_info_from_review(review, wait)
+                if result:
+                    self.__add_data_to_reviews_table(conn,result)
+                    self.__add_data_to_movies_table(
+                        conn,
+                        result["movie_name"],
+                        genre,  # Genre is not known here
+                        average_rating
+                    )
+            except Exception as e:
+                print(f"[ERROR] Failed to extract/add review index {review_index} on page {page_num+1}: {e}")
 
     def __extract_info_from_review(
             self,
             review : WebElement,
             wait : WebDriverWait) -> tuple[str, str, str, str] | None:
-        # I want to find rating of the user,
-        # it is in format "stars stars-X" where X is number of stars
-        pattern = re.compile(r"^stars stars-(\d)$")
         try:
             username = review.find_element(By.CLASS_NAME, "user-title").text
             user_ref  = review.find_element(By.CLASS_NAME, "user-title-name").get_attribute("href")
-            rating_element = WebDriverWait(review, 3).until(
-                lambda r: r.find_element(By.CLASS_NAME, "star-rating")
-            )
-            subclasses = rating_element.find_elements(By.XPATH, ".//span[contains(@class, 'stars')]")
-            for subclass in subclasses:
-                match = pattern.match(subclass.get_attribute("class"))
-                if match:
-                    break
+            rating = self.__get_rating(review)
+
             review_text = review.find_element(By.CLASS_NAME, "comment").text
             movie_name = wait.until(
                 EC.presence_of_element_located(
                     (By.CLASS_NAME, "film-header-name"))
             ).find_element(By.TAG_NAME, "h1").text
 
-            rating = match.group(1) if match else None
             print(f"✅ {username=} {rating=} {len(review_text or '')} chars {movie_name=}")
     
             return {
@@ -110,10 +114,31 @@ class MovieReviewScraper(AbsScrapper):
         
         except Exception as e:
             print(f"[WARN] Rating not found for one review: {e}")
-            rating_element = None
             return None
+        
+    def __get_rating(
+            self,
+            review : WebElement
+            ) -> str | None:
+        # I want to find rating of the user,
+        # it is in format "stars stars-X" where X is number of stars
+        pattern = re.compile(r"^stars stars-(\d)$")
+        rating_element = WebDriverWait(review, 3).until(
+            lambda r: r.find_element(By.CLASS_NAME, "star-rating")
+        )
+        subclasses = rating_element.find_elements(By.XPATH, ".//span[contains(@class, 'stars')]")
+        for subclass in subclasses:
+            match = pattern.match(subclass.get_attribute("class"))
+            if match:
+                break
+        rating = match.group(1) if match else None
 
-    def __move_to_next_page(self, driver, wait, current_page):
+        return rating
+
+    def __move_to_next_page(self,
+            driver, 
+            wait, 
+            current_page) -> bool:
         for attempt in range(3):
             try:
                 wait.until(
@@ -162,7 +187,7 @@ class MovieReviewScraper(AbsScrapper):
             average_rating : float) -> None:
         c = conn.cursor()
         c.execute("""
-            INSERT INTO movies (
+            INSERT OR IGNORE INTO movies (
                 movie_name,
                 genre,
                 average_rating
