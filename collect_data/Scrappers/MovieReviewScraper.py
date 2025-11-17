@@ -13,7 +13,18 @@ class MovieReviewScraper(AbsScrapper):
     
     def __init__(self):
         super().__init__()
-        
+        self.service = Service('chromedriver.exe')  # Update with your chromedriver path
+        self.driver = webdriver.Chrome(service=self.service, options=self.chrome_options)
+        self.wait = WebDriverWait(self.driver, 30)
+        self.conn =sqlite3.connect('movie_reviews.db')
+
+    def _restart_driver(self) -> None:
+        self.driver.quit()
+        self.service = Service('chromedriver.exe')  # Update with your chromedriver path
+        self.driver = webdriver.Chrome(service=self.service, options=self.chrome_options)
+        self.wait = WebDriverWait(self.driver, 30)
+        self.conn =sqlite3.connect('movie_reviews.db')
+    
     def scrap_CSFD_reviews_from_movie(
             self,
             movie_url: str,
@@ -21,44 +32,34 @@ class MovieReviewScraper(AbsScrapper):
             number_of_pages : int  = 5,
             page : int = 1
         ) -> None:
-        """Scrape reviews from a CSFD movie page."""
-
-        service = Service('chromedriver.exe')  # Update with your chromedriver path
-        driver = webdriver.Chrome(service=service, options=self.chrome_options)
-        wait = WebDriverWait(driver, 30)
-        conn = sqlite3.connect('movie_reviews.db')
+        self._restart_driver()
         try:
-            driver.get(movie_url)
-            wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
-            wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()
+            self.driver.get(movie_url)
+            self.wait.until(EC.presence_of_element_located((By.ID, "didomi-notice-agree-button")))
+            self.wait.until(EC.element_to_be_clickable((By.ID, "didomi-notice-agree-button"))).click()
             current_page = page
-            average_rating = self.__get_average_rating(wait)
+            average_rating = self.__get_average_rating()
 
             for page_num in tqdm.tqdm(range(number_of_pages)): # Limit to 10 pages
-                reviews = driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
+                reviews = self.driver.find_elements(By.CSS_SELECTOR, "article.article.article-white")
                 self.__handle_data_collection_from_page(
-                    conn,
                     reviews,
-                    wait,
                     page_num,
                     genre,
                     average_rating
                 )
                 try:
-                    self.__move_to_next_page(driver, wait, current_page)
+                    self.__move_to_next_page(current_page)
                 except Exception as e:
                     print(f"[ERROR] Could not move to page {current_page + 1}: {e}")
                     return True, current_page
                 current_page += 1
         finally:
-            driver.quit()
+            self.driver.quit()
             return False, current_page  # Indicate no retry needed
         
-    def __get_average_rating(
-                self,
-                wait : WebDriverWait
-                ) -> float | None:
-            elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-rating-average")))
+    def __get_average_rating(self) -> float | None:
+            elem = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "film-rating-average")))
             raw = (elem.get_attribute("textContent") or "").strip()
             m = re.search(r"([0-9]+(?:[.,][0-9]+)?)", raw)
             average_rating = float(m.group(1).replace(",", ".")) if m else None
@@ -66,20 +67,17 @@ class MovieReviewScraper(AbsScrapper):
         
     def __handle_data_collection_from_page(
             self,
-            conn : sqlite3.Connection,
             reviews : WebElement,
-            wait,
             page_num : int,
             genre : str,
             average_rating : float
             ) -> None:
         for review_index,review in enumerate(reviews): 
             try:
-                result = self.__extract_info_from_review(review, wait)
+                result = self.__extract_info_from_review(review)
                 if result:
-                    self.__add_data_to_reviews_table(conn,result)
+                    self.__add_data_to_reviews_table(result)
                     self.__add_data_to_movies_table(
-                        conn,
                         result["movie_name"],
                         genre,  # Genre is not known here
                         average_rating
@@ -89,15 +87,14 @@ class MovieReviewScraper(AbsScrapper):
 
     def __extract_info_from_review(
             self,
-            review : WebElement,
-            wait : WebDriverWait) -> tuple[str, str, str, str] | None:
+            review : WebElement) -> tuple[str, str, str, str] | None:
         try:
             username = review.find_element(By.CLASS_NAME, "user-title").text
             user_ref  = review.find_element(By.CLASS_NAME, "user-title-name").get_attribute("href")
             rating = self.__get_rating(review)
 
             review_text = review.find_element(By.CLASS_NAME, "comment").text
-            movie_name = wait.until(
+            movie_name = self.wait.until(
                 EC.presence_of_element_located(
                     (By.CLASS_NAME, "film-header-name"))
             ).find_element(By.TAG_NAME, "h1").text
@@ -135,20 +132,17 @@ class MovieReviewScraper(AbsScrapper):
 
         return rating
 
-    def __move_to_next_page(self,
-            driver, 
-            wait, 
-            current_page) -> bool:
+    def __move_to_next_page(self, current_page) -> bool:
         for attempt in range(3):
             try:
-                wait.until(
+                self.wait.until(
                     EC.presence_of_element_located((By.XPATH, f"//div[contains(@class, 'pagination')]//a[text()='{current_page+1}']"))
                 )
-                next_button = wait.until(
+                next_button = self.wait.until(
                     EC.element_to_be_clickable((By.XPATH, f"//div[contains(@class, 'pagination')]//a[text()='{current_page+1}']"))
                 )
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
-                driver.execute_script("arguments[0].click();", next_button)
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
+                self.driver.execute_script("arguments[0].click();", next_button)
                 return True
             except Exception as e:
                 print(f"[WARN] Attempt {attempt+1}/3 to click page {current_page+1} failed: {e}")
@@ -156,9 +150,8 @@ class MovieReviewScraper(AbsScrapper):
         
     def __add_data_to_reviews_table(
             self,
-            conn : sqlite3.Connection,
             review_data : list[tuple[str, str, str, str, str]]) -> None:
-        c = conn.cursor()
+        c = self.conn.cursor()
         # username, rating, review_text, movie_name
         # Create a table
         c.execute("""
@@ -177,15 +170,14 @@ class MovieReviewScraper(AbsScrapper):
             review_data["user_ref"]
             )
         )
-        conn.commit()
+        self.conn.commit()
 
     def __add_data_to_movies_table(
             self,
-            conn : sqlite3.Connection,
             movie_name : str,
             genre : str,
             average_rating : float) -> None:
-        c = conn.cursor()
+        c = self.conn.cursor()
         c.execute("""
             INSERT OR IGNORE INTO movies (
                 movie_name,
@@ -193,4 +185,4 @@ class MovieReviewScraper(AbsScrapper):
                 average_rating
             ) VALUES (?, ?, ?)""",
             (movie_name, genre, average_rating))
-        conn.commit()
+        self.conn.commit()
