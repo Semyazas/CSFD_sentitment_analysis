@@ -7,6 +7,7 @@ def collect_data_for_movies_from_genres(
         number_of_movies_from_genre : int  = 10,
         number_of_pages_to_scroll : int = 10) -> None:
     url_scrapper = UrlFinder()
+
     movies = url_scrapper.scrap_url_from_genres(
         genres,
         number_of_movies_from_genre
@@ -37,6 +38,8 @@ def collect_data_for_movie(
                 number_of_pages,
                 page = page_num
             )
+        
+
 def main():
     conn = sqlite3.connect('movie_reviews.db')
     genres = [
@@ -47,6 +50,17 @@ def main():
         ("Sci-Fi",False),
         ("Fantasy",False)
     ]
+    from multiprocessing import Process
+    processess = []
+
+    for genre in genres:
+        p = Process(target=collect_data_for_movies_from_genres, args=([[genre]]))
+        p.start()
+        processess.append(p)
+
+    for p in processess:
+        p.join()
+    
     collect_data_for_movies_from_genres(
         genres,
         number_of_movies_from_genre = 10,
